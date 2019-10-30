@@ -1,0 +1,51 @@
+
+---
+ aws_access_key: 
+ aws_secret_key: 
+
+ instance_type: t2.micro
+ image: ami-07d0cf3af28718ef8
+ region: us-east-1 #N.Virgina
+ route_prefix: "/32"
+ ec2_count: 1
+
+#VPC
+ vpc_cidr: 172.16.0.0/16
+ vpc_name: Michi VPC
+
+ az_1: "{{ region }}a"
+ az_2: "{{ region }}b"
+ az_3: "{{ region }}c"
+
+ #Instances
+ instance_name_public: "Public"
+ instance_name_private: "Private"
+ instance_name_rds: "RDS"
+ instance_name_lb: "Load Balancer"
+
+ ec2_instance_private_name: Private
+ ec2_instance_private_name_lb: Private for lb
+ ec2_instance_public_name: Public
+
+ db_user: admin
+ db_pw: admin123
+
+
+#Subnets
+ subnet_name_public: "PublicSN"
+ subnet_name_public_lb: "PublicSN for lb"
+ subnet_name_private: "PrivateSN"
+ subnet_name_private_lb: "PrivateSN"
+ subnet_name_web: "Websubnet"
+ subnet_name_web_lb: "Websubnet for lb"
+ subnet_name_rds: "RDSsubnet"
+
+ subnet_ip_jumphost: 172.16.3.0/24
+ subnet_ip_jumphost_lb: 172.16.4.0/24
+ subnet_ip_private: 172.16.1.0/24
+ subnet_ip_private_lb: 172.16.8.0/24
+ subnet_ip_web: 172.16.5.0/24
+ subnet_ip_web_lb: 172.16.6.0/24
+ subnet_ip_rds: 172.16.7.0/24
+#igw
+ igw_name: "Michi IGW"

@@ -1,0 +1,344 @@
+---
+- hosts: localhost
+  tasks: 
+    - name: attach variables
+      include_vars:
+          file: /home/ansible_poc/aws-vpc/variables.yml
+#CREATE VPC
+    - name: create VPC
+      ec2_vpc_net:
+        name: "{{ vpc_name }}"
+        cidr_block: "{{ vpc_cidr }}"
+        state: present
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: vpc
+
+    #CREATE SUBNETS
+    - name: create public subnet and associate to vpc
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        az: "{{ az_2 }}"
+        cidr: "{{ subnet_ip_jumphost }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ subnet_name_public }}"
+      register: publicsubnet
+
+    - name: create variable for public subnet cidr_block
+      set_fact:
+        public_subnet_cidr_block: "{{ publicsubnet.subnet.cidr_block }}"
+
+    - name: create private subnet and associate to vpc
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ az_1 }}"
+        cidr: "{{ subnet_ip_private }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ subnet_name_private }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: privatesubnet
+
+    - name: create variable for private subnet cidr_block
+      set_fact:
+        private_subnet_cidr_block: "{{ privatesubnet.subnet.cidr_block }}"
+
+    - name: create private subnet for lb and associate to vpc
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ az_2 }}"
+        cidr: "{{ subnet_ip_private_lb }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ subnet_name_private_lb }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: privatesubnetlb
+
+    - name: create variable for private subnet cidr_block
+      set_fact:
+        private_subnet_cidr_block_lb: "{{ privatesubnetlb.subnet.cidr_block }}"
+
+    - name: create web subnet and associate to vpc
+      ec2_vpc_subnet:
+          state: present
+          vpc_id: "{{ vpc.vpc.id }}"
+          region: "{{ region }}"
+          az: "{{ az_1 }}"
+          cidr: "{{ subnet_ip_web }}"
+          map_public: yes
+          resource_tags:
+            Name: "{{ subnet_name_web }}"
+          aws_access_key: "{{ aws_access_key }}"
+          aws_secret_key: "{{ aws_secret_key }}"
+      register: websubnet
+
+    - name: create variable for private subnet cidr_block
+      set_fact:
+          web_subnet_cidr_block: "{{ websubnet.subnet.cidr_block }}"
+
+    - name: create web subnet for lb and associate to vpc
+      ec2_vpc_subnet:
+          state: present
+          vpc_id: "{{ vpc.vpc.id }}"
+          region: "{{ region }}"
+          az: "{{ az_2 }}"
+          cidr: "{{ subnet_ip_web_lb }}"
+          map_public: yes
+          resource_tags:
+            Name: "{{ subnet_name_web_lb }}"
+          aws_access_key: "{{ aws_access_key }}"
+          aws_secret_key: "{{ aws_secret_key }}"
+      register: websubnetforlb
+
+    - name: create variable for private subnet for lb cidr_block
+      set_fact:
+          web_subnet_cidr_block: "{{ websubnetforlb.subnet.cidr_block }}"
+
+
+    #CREATE SECURITY GROUPS
+    - command: curl --silent --fail http://checkip.amazonaws.com/
+      register: external_ip
+    - set_fact:
+        routable_ip: "{{external_ip.stdout}}{{ route_prefix }}"
+    - name: Security group for public instance
+      ec2_group:
+        name: "{{ instance_name_public }}"
+        description: sg for public
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        rules:
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip: "{{ routable_ip }}"
+            rule_desc: allow only your ip
+
+    -
+      ec2_group:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        description: "sg for lb"
+        name: "{{ instance_name_lb }}"
+        region: "{{ region }}"
+        rules:
+          -
+            cidr_ip: 0.0.0.0/0
+            ports:
+              - 80
+            proto: tcp
+            rule_desc: "allow private subnet"
+        vpc_id: "{{ vpc.vpc.id }}"
+      name: "Security group for Load balancer instance"
+      register: sg_of_lb
+
+
+    - name: create variable for sg of load balance
+      set_fact:
+        group_id_of_sg_lb: "{{ sg_of_lb.group_id }}"
+
+    
+
+    - name: Security group for private
+      ec2_group:
+        name: "{{ instance_name_private }}"
+        description: sg for rds
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        rules:
+          - proto: tcp
+            ports:
+            - 80
+            group_id: "{{ group_id_of_sg_lb }}"
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip:
+              - "{{ public_subnet_cidr_block }}"
+    #CREATE IGW
+    - name: create IGW
+      ec2_vpc_igw:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        state: "present"
+        tags:
+          Name: "{{ igw_name }}"
+      register: igw
+
+
+    #CREATE ROUTE TABLE
+    - name: Set up public subnet route table
+      ec2_vpc_route_table:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        tags:
+          Name: Public
+        subnets:
+          - "{{ publicsubnet.subnet.id }}"
+          - "{{ websubnet.subnet.id }}"
+          - "{{ websubnetforlb.subnet.id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw.gateway_id }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: public_route_table
+
+
+    #NAT
+    - name: Create new nat gateway and allocate new EIP.
+      ec2_vpc_nat_gateway:
+        state: present
+        subnet_id: "{{ publicsubnet.subnet.id }}"
+        wait: yes
+        region: "{{ region }}"
+        if_exist_do_not_create: true
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: new_nat_gateway
+
+    - name: Create variable for NAT Gateway
+      set_fact:
+        nat_gateway_id: "{{ new_nat_gateway.nat_gateway_id }}"
+
+
+
+    - name: Set up private subnet route table
+      ec2_vpc_route_table:
+          vpc_id: "{{ vpc.vpc.id }}"
+          region: "{{ region }}"
+          tags:
+            Name: Private
+          subnets:
+            - "{{ privatesubnet.subnet.id }}"
+            - "{{ privatesubnetlb.subnet.id }}"
+          routes:
+            - dest: 0.0.0.0/0
+              gateway_id: "{{ nat_gateway_id }}"
+          aws_access_key: "{{ aws_access_key }}"
+          aws_secret_key: "{{ aws_secret_key }}"
+      register: public_route_table
+
+    #EC2 INSTANCE
+    - name: launching public ec2
+      ec2:
+        instance_type: "{{ instance_type }}"
+        image: "{{ image }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{aws_secret_key }}"
+        key_name: ansibleKP
+        group: "{{ instance_name_public }}"
+        vpc_subnet_id: "{{ publicsubnet.subnet.id }}"
+        wait: yes
+        assign_public_ip: yes
+        instance_tags:
+          Name: "{{ ec2_instance_public_name }}"
+
+    - name: launching private ec2
+      ec2:
+        instance_type: "{{ instance_type }}"
+        image: "{{ image }}"
+        region: "{{ region }}"
+        key_name: ansibleKP
+        user_data: |
+                    #! /bin/bash
+                      sudo apt-get update
+                      sudo apt-get install -y apache2
+                      sudo su
+                      cat  >  /var/www/html/index.html <<EOF
+                      <html><center><body><h3>Michi</h3>
+                      <p><h1>Sample Text</h1></p>
+                      </body></html>
+        group: "{{ instance_name_private }}"
+        count: 1
+        vpc_subnet_id: "{{ privatesubnet.subnet.id }}"
+        wait: yes
+        assign_public_ip: no
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{aws_secret_key }}"
+        instance_tags:
+          Name: "{{ ec2_instance_private_name }}"
+      register: private_ec2
+
+    - name: Create variable for private ec2 id
+      set_fact:
+        private_ec2_id: "{{ private_ec2.instance_ids }}"
+
+    - name: launching another private ec2 for load balancer
+      ec2:
+        instance_type: "{{ instance_type }}"
+        image: "{{ image }}"
+        region: "{{ region }}"
+        key_name: ansibleKP
+        user_data: |
+                    #! /bin/bash
+                      sudo apt-get update
+                      sudo apt-get install -y apache2
+                      sudo su
+                      cat  >  /var/www/html/index.html <<EOF
+                      <html><center><body><h3>Michi</h3>
+                      <p><h1>Sample Text</h1></p>
+                      </body></html>
+        group: "{{ instance_name_private }}"
+        count: 1
+        vpc_subnet_id: "{{ privatesubnetlb.subnet.id }}"
+        wait: yes
+        assign_public_ip: no
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{aws_secret_key }}"
+        instance_tags:
+          Name: "{{ ec2_instance_private_name }} for lb"
+      register: private_ec2_for_lb
+
+    - name: Create variable for private ec2 id for lb
+      set_fact:
+        private_ec2_id_lb: "{{ private_ec2_for_lb.instance_ids }}"
+
+
+    #CREATE LOAD BALANCER
+    - name: create load balancer
+      ec2_elb_lb:
+        name: "load-balancer"
+        instance_ids: "{{ item }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{aws_secret_key }}"
+        region: "{{ region }}"
+        security_group_names: "{{ instance_name_lb }}"
+        state: present
+        health_check:
+            ping_protocol: http # options are http, https, ssl, tcp
+            ping_port: 80
+            response_timeout: 10
+            ping_path: "/index.html"  # seconds
+            interval: 30 # seconds
+            unhealthy_threshold: 2
+            healthy_threshold: 2
+        subnets:
+          - "{{ websubnet.subnet.id }}"
+          - "{{ websubnetforlb.subnet.id }}"
+        purge_subnets: true
+        listeners:
+          - protocol: http
+            load_balancer_port: 80
+            instance_port: 80
+      with_items:
+          - "{{ private_ec2_for_lb.instance_ids }}"
+          - "{{ private_ec2.instance_ids }}"
